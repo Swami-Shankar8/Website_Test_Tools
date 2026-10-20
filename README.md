@@ -34,13 +34,13 @@ Make sure you have **Go** installed on your system.
 ```bash
 go version
 1.Running in VS Code / Desktop (Windows / Linux / macOS)
-go mod init audit-tool
+[go mod init audit-tool
 go run main.go
 2.Running in Termux (Android)
 pkg update && pkg upgrade -y
 pkg install golang git -y
 go mod init audit-tool
-go run main.go
+go run main.go](https://github.com/Swami-Shankar8/Website_Test_Tools.git)
 🖥️ Usage Example
 Plaintext
   ____             _                   _             _ 
