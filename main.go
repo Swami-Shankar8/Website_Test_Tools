@@ -3,13 +3,14 @@ package main
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
 
-// ANSI Color Codes for Terminal Display
+// ANSI Color Codes
 const (
 	ColorReset  = "\033[0m"
 	ColorRed    = "\033[31m"
@@ -19,8 +20,20 @@ const (
 	ColorBold   = "\033[1m"
 )
 
-// Custom Branding Logo
-func printLogo() {
+// Target Security Headers
+var securityHeaders = []string{
+	"Strict-Transport-Security",
+	"Content-Security-Policy",
+	"X-Frame-Options",
+	"X-Content-Type-Options",
+	"Referrer-Policy",
+	"Permissions-Policy",
+}
+
+// Common Network Ports
+var commonPorts = []int{80, 443, 8080, 8443, 21, 22, 25, 3306}
+
+func printBanner() {
 	banner := `
   ____             _                   _             _ 
  / ___|  ___  ___ | |  _ __  _ __ ___ | |_ ___   ___| |
@@ -31,50 +44,39 @@ func printLogo() {
 `
 	fmt.Println(ColorCyan + ColorBold + banner + ColorReset)
 	fmt.Println(ColorYellow + "========================================================" + ColorReset)
-	fmt.Println(ColorBold + "   Website Testing Developer by Swami" + ColorReset)
+	fmt.Println(ColorBold + "   Website Testing & Recon Tool - Developer: Swami" + ColorReset)
 	fmt.Println(ColorYellow + "========================================================\n" + ColorReset)
 }
 
-// Target security headers
-var securityHeaders = []string{
-	"Strict-Transport-Security",
-	"Content-Security-Policy",
-	"X-Frame-Options",
-	"X-Content-Type-Options",
-	"Referrer-Policy",
-	"Permissions-Policy",
-}
-
-func checkWebsite(rawURL string) {
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		rawURL = "https://" + rawURL
+// Option 1: Extended Server Info, Technology Stack, Allowed Methods & Headers
+func inspectServerAndHeaders(targetDomain string) {
+	if !strings.HasPrefix(targetDomain, "http://") && !strings.HasPrefix(targetDomain, "https://") {
+		targetDomain = "https://" + targetDomain
 	}
 
-	parsedURL, err := url.Parse(rawURL)
+	parsedURL, err := url.Parse(targetDomain)
 	if err != nil {
 		fmt.Printf(ColorRed+"[!] Invalid URL: %v\n"+ColorReset, err)
 		return
 	}
 
-	// Timeout & Transport settings
-	customTransport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
-	}
-
 	client := &http.Client{
-		Timeout:   10 * time.Second,
-		Transport: customTransport,
+		Timeout: 8 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: false},
+		},
 	}
 
-	fmt.Printf(ColorBold+"[*] Scanning Target: %s\n"+ColorReset, parsedURL.String())
+	fmt.Printf(ColorBold+"\n[*] Auditing Target: %s\n"+ColorReset, parsedURL.String())
 	fmt.Println(ColorYellow + "--------------------------------------------------------" + ColorReset)
 
+	// 1. GET Request for General Headers
 	req, err := http.NewRequest("GET", parsedURL.String(), nil)
 	if err != nil {
 		fmt.Printf(ColorRed+"[!] Request creation error: %v\n"+ColorReset, err)
 		return
 	}
-	req.Header.Set("User-Agent", "Swami-WebAudit-Scanner/1.0")
+	req.Header.Set("User-Agent", "Swami-WebAudit-Tool/2.0")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -83,34 +85,133 @@ func checkWebsite(rawURL string) {
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("HTTP Status: %s%s%s\n\n", ColorGreen+ColorBold, resp.Status, ColorReset)
-	fmt.Println(ColorBold + "--- Security Headers Analysis ---" + ColorReset)
+	// Server & Stack Information
+	fmt.Printf("HTTP Status Code : %s%s%s\n", ColorGreen+ColorBold, resp.Status, ColorReset)
+	
+	server := resp.Header.Get("Server")
+	if server != "" {
+		fmt.Printf("Server Software  : %s%s%s\n", ColorCyan, server, ColorReset)
+	} else {
+		fmt.Println("Server Software  : " + ColorYellow + "Hidden / Undisclosed" + ColorReset)
+	}
 
+	poweredBy := resp.Header.Get("X-Powered-By")
+	if poweredBy != "" {
+		fmt.Printf("Technology Stack : %s%s%s\n", ColorCyan, poweredBy, ColorReset)
+	} else {
+		fmt.Println("Technology Stack : " + ColorYellow + "Not Disclosed in Headers" + ColorReset)
+	}
+
+	// 2. Query Allowed Methods via OPTIONS Request
+	optionsReq, _ := http.NewRequest("OPTIONS", parsedURL.String(), nil)
+	optionsResp, err := client.Do(optionsReq)
+	if err == nil {
+		allowHeader := optionsResp.Header.Get("Allow")
+		if allowHeader != "" {
+			fmt.Printf("Allowed Methods  : %s%s%s\n", ColorGreen, allowHeader, ColorReset)
+		} else {
+			fmt.Println("Allowed Methods  : " + ColorYellow + "Header Not Returned" + ColorReset)
+		}
+		optionsResp.Body.Close()
+	}
+
+	// 3. SSL/TLS Details
+	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		cert := resp.TLS.PeerCertificates[0]
+		fmt.Printf("SSL Certificate  : Issuer [%s] | Expires [%s]\n", cert.Issuer.CommonName, cert.NotAfter.Format("2006-01-02"))
+	}
+
+	// 4. Security Headers Checklist
+	fmt.Println(ColorBold + "\n--- Security Headers Checklist ---" + ColorReset)
 	for _, header := range securityHeaders {
-		value := resp.Header.Get(header)
-		if value != "" {
-			fmt.Printf("%s[+] %s: PRESENT%s\n    Value: %s\n", ColorGreen, header, ColorReset, value)
+		val := resp.Header.Get(header)
+		if val != "" {
+			fmt.Printf("%s[+] %s: PRESENT%s\n", ColorGreen, header, ColorReset)
 		} else {
 			fmt.Printf("%s[-] %s: MISSING%s\n", ColorRed, header, ColorReset)
 		}
 	}
-
-	fmt.Println(ColorYellow + "\n========================================================" + ColorReset)
-	fmt.Println(ColorCyan + "   Audit completed by Swami Security Tool" + ColorReset)
-	fmt.Println(ColorYellow + "========================================================\n" + ColorReset)
 }
 
-func main() {
-	printLogo()
+// Option 2: Basic Port Accessibility Check
+func checkOpenPorts(domain string) {
+	domain = strings.TrimPrefix(domain, "https://")
+	domain = strings.TrimPrefix(domain, "http://")
+	domain = strings.TrimSuffix(domain, "/")
 
-	var target string
-	fmt.Print(ColorBold + "Enter website URL (e.g., example.com): " + ColorReset)
-	fmt.Scanln(&target)
+	fmt.Printf(ColorBold+"\n[*] Checking Common Network Ports on: %s\n"+ColorReset, domain)
+	fmt.Println(ColorYellow + "--------------------------------------------------------" + ColorReset)
 
-	if strings.TrimSpace(target) == "" {
-		fmt.Println(ColorRed + "[!] Target URL cannot be empty." + ColorReset)
+	for _, port := range commonPorts {
+		address := fmt.Sprintf("%s:%d", domain, port)
+		conn, err := net.DialTimeout("tcp", address, 2*time.Second)
+
+		if err != nil {
+			fmt.Printf("%s[-] Port %d: CLOSED / TIMEOUT%s\n", ColorRed, port, ColorReset)
+		} else {
+			conn.Close()
+			fmt.Printf("%s[+] Port %d: OPEN%s\n", ColorGreen, port, ColorReset)
+		}
+	}
+}
+
+// Option 3: DNS & IP Address Lookup
+func resolveDNS(domain string) {
+	domain = strings.TrimPrefix(domain, "https://")
+	domain = strings.TrimPrefix(domain, "http://")
+	domain = strings.TrimSuffix(domain, "/")
+
+	fmt.Printf(ColorBold+"\n[*] Resolving DNS Records for: %s\n"+ColorReset, domain)
+	fmt.Println(ColorYellow + "--------------------------------------------------------" + ColorReset)
+
+	ips, err := net.LookupIP(domain)
+	if err != nil {
+		fmt.Printf(ColorRed+"[!] DNS Lookup failed: %v\n"+ColorReset, err)
 		return
 	}
 
-	checkWebsite(target)
+	for _, ip := range ips {
+		fmt.Printf("[+] IP Address: %s%s%s\n", ColorCyan, ip.String(), ColorReset)
+	}
+}
+
+func main() {
+	printBanner()
+
+	var target string
+	fmt.Print(ColorBold + "Enter Target Domain/URL (e.g., example.com): " + ColorReset)
+	fmt.Scanln(&target)
+
+	target = strings.TrimSpace(target)
+	if target == "" {
+		fmt.Println(ColorRed + "[!] Target cannot be empty." + ColorReset)
+		return
+	}
+
+	for {
+		fmt.Println("\n" + ColorYellow + "=================== SELECT OPTION ===================" + ColorReset)
+		fmt.Println(" 1. Server Info, Tech Stack, Allowed Methods & Headers")
+		fmt.Println(" 2. Basic Port Accessibility Check")
+		fmt.Println(" 3. DNS & IP Address Lookup")
+		fmt.Println(" 4. Exit")
+		fmt.Println(ColorYellow + "=====================================================" + ColorReset)
+		fmt.Print(ColorBold + "Choose an option (1-4): " + ColorReset)
+
+		var choice int
+		fmt.Scanln(&choice)
+
+		switch choice {
+		case 1:
+			inspectServerAndHeaders(target)
+		case 2:
+			checkOpenPorts(target)
+		case 3:
+			resolveDNS(target)
+		case 4:
+			fmt.Println(ColorCyan + "\nExiting Swami Security Tool. Goodbye!" + ColorReset)
+			return
+		default:
+			fmt.Println(ColorRed + "[!] Invalid choice! Please select 1, 2, 3, or 4." + ColorReset)
+		}
+	}
 }
